@@ -1,0 +1,819 @@
+-- =====================================================================
+-- 1. DATOS GEOGRAFICOS Y DE TORNEO
+-- =====================================================================
+
+CREATE TABLE confederacion (
+    confederacion_id        INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    codigo                  VARCHAR(10) NOT NULL,
+    nombre                  VARCHAR(100) NOT NULL,
+
+    CONSTRAINT uq_confederacion_codigo UNIQUE (codigo),
+    CONSTRAINT uq_confederacion_nombre UNIQUE (nombre)
+);
+
+CREATE TABLE pais (
+    pais_id                 INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    confederacion_id        INTEGER,
+    nombre                  VARCHAR(100) NOT NULL,
+    codigo_iso2             CHAR(2) NOT NULL,
+    codigo_iso3             CHAR(3) NOT NULL,
+
+    CONSTRAINT uq_pais_nombre UNIQUE (nombre),
+    CONSTRAINT uq_pais_iso2 UNIQUE (codigo_iso2),
+    CONSTRAINT uq_pais_iso3 UNIQUE (codigo_iso3),
+
+    CONSTRAINT fk_pais_confederacion
+        FOREIGN KEY (confederacion_id)
+        REFERENCES confederacion (confederacion_id)
+);
+
+CREATE TABLE mercado (
+    mercado_id              INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    pais_id                 INTEGER NOT NULL,
+    nombre                  VARCHAR(120) NOT NULL,
+    huso_horario            VARCHAR(80) NOT NULL,
+    prime_time_desde        TIME NOT NULL,
+    prime_time_hasta        TIME NOT NULL,
+
+    CONSTRAINT uq_mercado UNIQUE (pais_id, nombre, huso_horario),
+
+    CONSTRAINT fk_mercado_pais
+        FOREIGN KEY (pais_id)
+        REFERENCES pais (pais_id)
+);
+
+
+CREATE TABLE torneo (
+    torneo_id                       INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    nombre                          VARCHAR(150) NOT NULL,
+    anio                            SMALLINT NOT NULL,
+    fecha_inicio                    DATE NOT NULL,
+    fecha_fin                       DATE NOT NULL,
+
+    -- Parametros reglamentarios del torneo.
+    min_jugadores_convocados        SMALLINT NOT NULL,
+    max_jugadores_convocados        SMALLINT NOT NULL,
+    max_cambios                     SMALLINT NOT NULL,
+    max_ventanas_cambio             SMALLINT NOT NULL,
+    cambio_extra_alargue            BOOLEAN NOT NULL DEFAULT FALSE,
+    ventana_extra_alargue           BOOLEAN NOT NULL DEFAULT FALSE,
+    amarillas_para_suspension       SMALLINT NOT NULL,
+
+    CONSTRAINT uq_torneo UNIQUE (nombre, anio),
+
+    CONSTRAINT ck_torneo_fechas
+        CHECK (fecha_fin >= fecha_inicio),
+
+    CONSTRAINT ck_torneo_convocados
+        CHECK (
+            min_jugadores_convocados > 0
+            AND max_jugadores_convocados >= min_jugadores_convocados
+        ),
+
+    CONSTRAINT ck_torneo_cambios
+        CHECK (
+            max_cambios >= 0
+            AND max_ventanas_cambio >= 0
+        ),
+
+    CONSTRAINT ck_torneo_amarillas
+        CHECK (amarillas_para_suspension > 0)
+);
+
+
+CREATE TABLE fase (
+    fase_id                 INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    torneo_id               INTEGER NOT NULL,
+    nombre                  VARCHAR(80) NOT NULL,
+    orden                   SMALLINT NOT NULL,
+    es_eliminatoria         BOOLEAN NOT NULL DEFAULT FALSE,
+
+    CONSTRAINT uq_fase_nombre UNIQUE (torneo_id, nombre),
+    CONSTRAINT uq_fase_orden UNIQUE (torneo_id, orden),
+    CONSTRAINT ck_fase_orden CHECK (orden > 0),
+
+    CONSTRAINT fk_fase_torneo
+        FOREIGN KEY (torneo_id)
+        REFERENCES torneo (torneo_id)
+);
+
+-- =====================================================================
+-- 2. SELECCIONES, JUGADORES Y CONVOCATORIAS
+-- =====================================================================
+
+CREATE TABLE seleccion (
+    seleccion_id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    torneo_id               INTEGER NOT NULL,
+    pais_id                 INTEGER NOT NULL,
+    grupo                   VARCHAR(10),
+
+    CONSTRAINT uq_seleccion_torneo_pais
+        UNIQUE (torneo_id, pais_id),
+
+    CONSTRAINT fk_seleccion_torneo
+        FOREIGN KEY (torneo_id)
+        REFERENCES torneo (torneo_id),
+
+    CONSTRAINT fk_seleccion_pais
+        FOREIGN KEY (pais_id)
+        REFERENCES pais (pais_id)
+);
+
+
+CREATE TABLE jugador (
+    jugador_id              INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    nombres                 VARCHAR(120) NOT NULL,
+    apellidos               VARCHAR(120) NOT NULL,
+    fecha_nacimiento        DATE,
+    pais_nacionalidad_id    INTEGER,
+
+    CONSTRAINT fk_jugador_nacionalidad
+        FOREIGN KEY (pais_nacionalidad_id)
+        REFERENCES pais (pais_id)
+);
+
+-- convocatoria_jugador no duplica a jugador:
+-- jugador contiene la identidad estable de la persona.
+-- convocatoria_jugador contiene datos dependientes de su participacion
+-- en una seleccion y torneo concretos.
+CREATE TABLE convocatoria_jugador (
+    convocatoria_jugador_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    seleccion_id            INTEGER NOT NULL,
+    jugador_id              INTEGER NOT NULL,
+    club_origen             VARCHAR(150) NOT NULL,
+    posicion_habitual       VARCHAR(50) NOT NULL,
+    dorsal                  SMALLINT NOT NULL,
+    fecha_alta              DATE NOT NULL,
+    fecha_baja              DATE,
+    motivo_baja             VARCHAR(300),
+
+    CONSTRAINT uq_convocatoria_jugador
+        UNIQUE (seleccion_id, jugador_id),
+
+    CONSTRAINT ck_convocatoria_dorsal
+        CHECK (dorsal > 0),
+
+    CONSTRAINT ck_convocatoria_fechas
+        CHECK (fecha_baja IS NULL OR fecha_baja >= fecha_alta),
+
+    CONSTRAINT fk_convocatoria_seleccion
+        FOREIGN KEY (seleccion_id)
+        REFERENCES seleccion (seleccion_id),
+
+    CONSTRAINT fk_convocatoria_jugador
+        FOREIGN KEY (jugador_id)
+        REFERENCES jugador (jugador_id)
+);
+
+CREATE TABLE cambio_convocatoria (
+    cambio_convocatoria_id      INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    convocatoria_saliente_id    INTEGER NOT NULL,
+    convocatoria_entrante_id    INTEGER NOT NULL,
+    fecha_cambio                DATE NOT NULL,
+    motivo                      VARCHAR(300) NOT NULL,
+
+    CONSTRAINT uq_cambio_convocatoria_saliente
+        UNIQUE (convocatoria_saliente_id),
+
+    CONSTRAINT ck_cambio_convocatoria_jugadores
+        CHECK (convocatoria_saliente_id <> convocatoria_entrante_id),
+
+    CONSTRAINT fk_cambio_convocatoria_saliente
+        FOREIGN KEY (convocatoria_saliente_id)
+        REFERENCES convocatoria_jugador (convocatoria_jugador_id),
+
+    CONSTRAINT fk_cambio_convocatoria_entrante
+        FOREIGN KEY (convocatoria_entrante_id)
+        REFERENCES convocatoria_jugador (convocatoria_jugador_id)
+);
+
+
+CREATE TABLE cuerpo_tecnico (
+    cuerpo_tecnico_id       INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    seleccion_id            INTEGER NOT NULL,
+    nombres                 VARCHAR(120) NOT NULL,
+    apellidos               VARCHAR(120) NOT NULL,
+    fecha_nacimiento        DATE,
+    pais_nacionalidad_id    INTEGER,
+    rol                     VARCHAR(50) NOT NULL,
+
+    CONSTRAINT fk_cuerpo_tecnico_seleccion
+        FOREIGN KEY (seleccion_id)
+        REFERENCES seleccion (seleccion_id),
+
+    CONSTRAINT fk_cuerpo_tecnico_nacionalidad
+        FOREIGN KEY (pais_nacionalidad_id)
+        REFERENCES pais (pais_id)
+);
+
+
+-- =====================================================================
+-- 3. SEDES, PARTIDOS Y CUADRO DEL TORNEO
+-- =====================================================================
+
+CREATE TABLE sede (
+    sede_id                 INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    nombre_estadio          VARCHAR(150) NOT NULL,
+    ciudad                  VARCHAR(120) NOT NULL,
+    pais_id                 INTEGER NOT NULL,
+    capacidad               INTEGER NOT NULL,
+    huso_horario            VARCHAR(80) NOT NULL,
+    latitud                 DECIMAL(9,6),
+    longitud                DECIMAL(9,6),
+
+    CONSTRAINT uq_sede
+        UNIQUE (nombre_estadio, ciudad, pais_id),
+
+    CONSTRAINT ck_sede_capacidad
+        CHECK (capacidad > 0),
+
+    CONSTRAINT ck_sede_latitud
+        CHECK (latitud IS NULL OR latitud BETWEEN -90 AND 90),
+
+    CONSTRAINT ck_sede_longitud
+        CHECK (longitud IS NULL OR longitud BETWEEN -180 AND 180),
+
+    CONSTRAINT fk_sede_pais
+        FOREIGN KEY (pais_id)
+        REFERENCES pais (pais_id)
+);
+
+CREATE TABLE partido (
+    partido_id                  INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    fase_id                     INTEGER NOT NULL,
+    sede_id                     INTEGER NOT NULL,
+    fecha_hora_utc              TIMESTAMP NOT NULL,
+
+    -- Desnormalizacion controlada explicada en el encabezado.
+    fecha_hora_local_oficial    TIMESTAMP NOT NULL,
+
+    asistencia_publico          INTEGER,
+
+    CONSTRAINT ck_partido_asistencia
+        CHECK (asistencia_publico IS NULL OR asistencia_publico >= 0),
+
+    CONSTRAINT fk_partido_fase
+        FOREIGN KEY (fase_id)
+        REFERENCES fase (fase_id),
+
+    CONSTRAINT fk_partido_sede
+        FOREIGN KEY (sede_id)
+        REFERENCES sede (sede_id)
+);
+
+-- Entidad asociativa entre partido y seleccion.
+-- Permite representar LOCAL/VISITANTE sin repetir columnas
+-- seleccion_local_id y seleccion_visitante_id en partido.
+CREATE TABLE partido_seleccion (
+    partido_seleccion_id     INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    partido_id               INTEGER NOT NULL,
+    seleccion_id             INTEGER NOT NULL,
+    condicion                VARCHAR(10) NOT NULL,
+
+    -- Resultado oficial: desnormalizacion controlada.
+    goles                    SMALLINT,
+    penales                  SMALLINT,
+
+    CONSTRAINT uq_partido_seleccion
+        UNIQUE (partido_id, seleccion_id),
+
+    CONSTRAINT uq_partido_condicion
+        UNIQUE (partido_id, condicion),
+
+    CONSTRAINT ck_partido_condicion
+        CHECK (condicion IN ('LOCAL', 'VISITANTE')),
+
+    CONSTRAINT ck_partido_goles
+        CHECK (goles IS NULL OR goles >= 0),
+
+    CONSTRAINT ck_partido_penales
+        CHECK (penales IS NULL OR penales >= 0),
+
+    CONSTRAINT fk_partido_seleccion_partido
+        FOREIGN KEY (partido_id)
+        REFERENCES partido (partido_id),
+
+    CONSTRAINT fk_partido_seleccion_seleccion
+        FOREIGN KEY (seleccion_id)
+        REFERENCES seleccion (seleccion_id)
+);
+
+-- Relacion que representa el avance en el cuadro eliminatorio.
+-- Permite determinar cruces futuros para las advertencias de arbitraje.
+CREATE TABLE avance_partido (
+    partido_origen_id        INTEGER NOT NULL,
+    partido_destino_id       INTEGER NOT NULL,
+    clasificado              VARCHAR(10) NOT NULL,
+    condicion_destino        VARCHAR(10) NOT NULL,
+
+    PRIMARY KEY (partido_origen_id, clasificado),
+
+    CONSTRAINT ck_avance_partido_distinto
+        CHECK (partido_origen_id <> partido_destino_id),
+
+    CONSTRAINT ck_avance_clasificado
+        CHECK (clasificado IN ('GANADOR', 'PERDEDOR')),
+
+    CONSTRAINT ck_avance_condicion
+        CHECK (condicion_destino IN ('LOCAL', 'VISITANTE')),
+
+    CONSTRAINT uq_avance_destino_condicion
+        UNIQUE (partido_destino_id, condicion_destino),
+
+    CONSTRAINT fk_avance_origen
+        FOREIGN KEY (partido_origen_id)
+        REFERENCES partido (partido_id),
+
+    CONSTRAINT fk_avance_destino
+        FOREIGN KEY (partido_destino_id)
+        REFERENCES partido (partido_id)
+);
+
+
+-- =====================================================================
+-- 4. ALINEACIONES
+-- =====================================================================
+
+CREATE TABLE alineacion (
+    alineacion_id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    partido_seleccion_id     INTEGER NOT NULL,
+    esquema_tactico          VARCHAR(30),
+
+    CONSTRAINT uq_alineacion_partido_seleccion
+        UNIQUE (partido_seleccion_id),
+
+    CONSTRAINT fk_alineacion_partido_seleccion
+        FOREIGN KEY (partido_seleccion_id)
+        REFERENCES partido_seleccion (partido_seleccion_id)
+);
+
+-- El dorsal NO se repite aqui: pertenece a convocatoria_jugador y puede
+-- obtenerse mediante la FK. Repetirlo generaria una dependencia redundante.
+CREATE TABLE alineacion_jugador (
+    alineacion_jugador_id     INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    alineacion_id             INTEGER NOT NULL,
+    convocatoria_jugador_id   INTEGER NOT NULL,
+    tipo                      VARCHAR(10) NOT NULL,
+    posicion_en_cancha        VARCHAR(50),
+    es_capitan                BOOLEAN NOT NULL DEFAULT FALSE,
+
+    CONSTRAINT uq_alineacion_jugador
+        UNIQUE (alineacion_id, convocatoria_jugador_id),
+
+    CONSTRAINT ck_alineacion_tipo
+        CHECK (tipo IN ('TITULAR', 'SUPLENTE')),
+
+    CONSTRAINT fk_alineacion_jugador_alineacion
+        FOREIGN KEY (alineacion_id)
+        REFERENCES alineacion (alineacion_id),
+
+    CONSTRAINT fk_alineacion_jugador_convocatoria
+        FOREIGN KEY (convocatoria_jugador_id)
+        REFERENCES convocatoria_jugador (convocatoria_jugador_id)
+);
+
+
+-- =====================================================================
+-- 5. EVENTOS DEL PARTIDO
+-- =====================================================================
+
+-- Superentidad comun para no repetir partido/minuto/periodo en gol,
+-- tarjeta y sustitucion.
+CREATE TABLE evento_partido (
+    evento_id                INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    partido_id               INTEGER NOT NULL,
+    periodo                  VARCHAR(20) NOT NULL,
+    minuto                   SMALLINT NOT NULL,
+    minuto_adicional         SMALLINT NOT NULL DEFAULT 0,
+    secuencia                SMALLINT NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_evento_orden
+        UNIQUE (
+            partido_id,
+            periodo,
+            minuto,
+            minuto_adicional,
+            secuencia
+        ),
+
+    CONSTRAINT ck_evento_periodo
+        CHECK (
+            periodo IN (
+                'PRIMER_TIEMPO',
+                'SEGUNDO_TIEMPO',
+                'ALARGUE_1',
+                'ALARGUE_2',
+                'PENALES'
+            )
+        ),
+
+    CONSTRAINT ck_evento_minuto
+        CHECK (minuto >= 0 AND minuto_adicional >= 0),
+
+    CONSTRAINT ck_evento_secuencia
+        CHECK (secuencia > 0),
+
+    CONSTRAINT fk_evento_partido
+        FOREIGN KEY (partido_id)
+        REFERENCES partido (partido_id)
+);
+
+CREATE TABLE gol (
+    evento_id                    INTEGER PRIMARY KEY,
+    autor_convocatoria_id        INTEGER NOT NULL,
+    asistencia_convocatoria_id   INTEGER,
+    beneficiario_id              INTEGER NOT NULL,
+    tipo                         VARCHAR(30) NOT NULL,
+
+    CONSTRAINT ck_gol_asistencia
+        CHECK (
+            asistencia_convocatoria_id IS NULL
+            OR asistencia_convocatoria_id <> autor_convocatoria_id
+        ),
+
+    CONSTRAINT ck_gol_tipo
+        CHECK (
+            tipo IN (
+                'JUGADA',
+                'PENAL',
+                'TIRO_LIBRE',
+                'EN_CONTRA',
+                'CABEZAZO',
+                'OTRO'
+            )
+        ),
+
+    CONSTRAINT fk_gol_evento
+        FOREIGN KEY (evento_id)
+        REFERENCES evento_partido (evento_id),
+
+    CONSTRAINT fk_gol_autor
+        FOREIGN KEY (autor_convocatoria_id)
+        REFERENCES convocatoria_jugador (convocatoria_jugador_id),
+
+    CONSTRAINT fk_gol_asistencia
+        FOREIGN KEY (asistencia_convocatoria_id)
+        REFERENCES convocatoria_jugador (convocatoria_jugador_id),
+
+    CONSTRAINT fk_gol_beneficiario
+        FOREIGN KEY (beneficiario_id)
+        REFERENCES partido_seleccion (partido_seleccion_id)
+);
+
+CREATE TABLE tarjeta (
+    evento_id                    INTEGER PRIMARY KEY,
+    convocatoria_jugador_id      INTEGER NOT NULL,
+    tipo                         VARCHAR(10) NOT NULL,
+    tipo_expulsion               VARCHAR(20),
+    motivo                       VARCHAR(300),
+
+    CONSTRAINT ck_tarjeta_tipo
+        CHECK (tipo IN ('AMARILLA', 'ROJA')),
+
+    CONSTRAINT ck_tarjeta_expulsion
+        CHECK (
+            (tipo = 'AMARILLA' AND tipo_expulsion IS NULL)
+            OR
+            (
+                tipo = 'ROJA'
+                AND tipo_expulsion IN ('DIRECTA', 'DOBLE_AMARILLA')
+            )
+        ),
+
+    CONSTRAINT fk_tarjeta_evento
+        FOREIGN KEY (evento_id)
+        REFERENCES evento_partido (evento_id),
+
+    CONSTRAINT fk_tarjeta_convocatoria
+        FOREIGN KEY (convocatoria_jugador_id)
+        REFERENCES convocatoria_jugador (convocatoria_jugador_id)
+);
+
+CREATE TABLE sustitucion (
+    evento_id                    INTEGER PRIMARY KEY,
+    jugador_sale_id              INTEGER NOT NULL,
+    jugador_entra_id             INTEGER NOT NULL,
+    numero_ventana               SMALLINT,
+    motivo                       VARCHAR(20) NOT NULL,
+
+    CONSTRAINT ck_sustitucion_jugadores
+        CHECK (jugador_sale_id <> jugador_entra_id),
+
+    CONSTRAINT ck_sustitucion_ventana
+        CHECK (numero_ventana IS NULL OR numero_ventana > 0),
+
+    CONSTRAINT ck_sustitucion_motivo
+        CHECK (motivo IN ('TACTICO', 'LESION', 'PRECAUCION', 'OTRO')),
+
+    CONSTRAINT fk_sustitucion_evento
+        FOREIGN KEY (evento_id)
+        REFERENCES evento_partido (evento_id),
+
+    CONSTRAINT fk_sustitucion_sale
+        FOREIGN KEY (jugador_sale_id)
+        REFERENCES alineacion_jugador (alineacion_jugador_id),
+
+    CONSTRAINT fk_sustitucion_entra
+        FOREIGN KEY (jugador_entra_id)
+        REFERENCES alineacion_jugador (alineacion_jugador_id)
+);
+
+
+-- =====================================================================
+-- 6. SUSPENSIONES
+-- =====================================================================
+
+CREATE TABLE suspension (
+    suspension_id              INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    convocatoria_jugador_id    INTEGER NOT NULL,
+    partido_origen_id          INTEGER NOT NULL,
+    tipo                       VARCHAR(30) NOT NULL,
+    motivo                     VARCHAR(300) NOT NULL,
+    anulada                    BOOLEAN NOT NULL DEFAULT FALSE,
+
+    CONSTRAINT ck_suspension_tipo
+        CHECK (
+            tipo IN (
+                'ACUMULACION_AMARILLAS',
+                'ROJA_DIRECTA',
+                'DOBLE_AMARILLA',
+                'DISCIPLINARIA'
+            )
+        ),
+
+    CONSTRAINT fk_suspension_convocatoria
+        FOREIGN KEY (convocatoria_jugador_id)
+        REFERENCES convocatoria_jugador (convocatoria_jugador_id),
+
+    CONSTRAINT fk_suspension_origen
+        FOREIGN KEY (partido_origen_id)
+        REFERENCES partido (partido_id)
+);
+
+
+CREATE TABLE suspension_partido (
+    suspension_id              INTEGER NOT NULL,
+    partido_id                 INTEGER NOT NULL,
+    cumplida                   BOOLEAN NOT NULL DEFAULT FALSE,
+
+    PRIMARY KEY (suspension_id, partido_id),
+
+    CONSTRAINT fk_suspension_partido_suspension
+        FOREIGN KEY (suspension_id)
+        REFERENCES suspension (suspension_id),
+
+    CONSTRAINT fk_suspension_partido_partido
+        FOREIGN KEY (partido_id)
+        REFERENCES partido (partido_id)
+);
+
+
+-- =====================================================================
+-- 7. ARBITROS
+-- =====================================================================
+
+CREATE TABLE arbitro (
+    arbitro_id                INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    nombres                   VARCHAR(120) NOT NULL,
+    apellidos                 VARCHAR(120) NOT NULL,
+    fecha_nacimiento          DATE,
+    pais_id                   INTEGER NOT NULL,
+    categoria                 VARCHAR(50) NOT NULL,
+
+    CONSTRAINT fk_arbitro_pais
+        FOREIGN KEY (pais_id)
+        REFERENCES pais (pais_id)
+);
+
+CREATE TABLE arbitro_idioma (
+    arbitro_id                INTEGER NOT NULL,
+    idioma                    VARCHAR(80) NOT NULL,
+
+    PRIMARY KEY (arbitro_id, idioma),
+
+    CONSTRAINT fk_arbitro_idioma_arbitro
+        FOREIGN KEY (arbitro_id)
+        REFERENCES arbitro (arbitro_id)
+);
+
+CREATE TABLE designacion_arbitral (
+    designacion_id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    partido_id                INTEGER NOT NULL,
+    arbitro_id                INTEGER NOT NULL,
+    rol                       VARCHAR(30) NOT NULL,
+
+    CONSTRAINT uq_designacion_arbitro
+        UNIQUE (partido_id, arbitro_id),
+
+    CONSTRAINT uq_designacion_rol
+        UNIQUE (partido_id, rol),
+
+    CONSTRAINT ck_designacion_rol
+        CHECK (
+            rol IN (
+                'PRINCIPAL',
+                'ASISTENTE_1',
+                'ASISTENTE_2',
+                'CUARTO_ARBITRO',
+                'VAR'
+            )
+        ),
+
+    CONSTRAINT fk_designacion_partido
+        FOREIGN KEY (partido_id)
+        REFERENCES partido (partido_id),
+
+    CONSTRAINT fk_designacion_arbitro
+        FOREIGN KEY (arbitro_id)
+        REFERENCES arbitro (arbitro_id)
+);
+
+CREATE TABLE antecedente_arbitral (
+    antecedente_id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    arbitro_id                INTEGER NOT NULL,
+    partido_id                INTEGER NOT NULL,
+    fecha                     DATE NOT NULL,
+    tipo                      VARCHAR(15) NOT NULL,
+    detalle                   VARCHAR(2000) NOT NULL,
+
+    CONSTRAINT ck_antecedente_tipo
+        CHECK (tipo IN ('INFORME', 'SANCION')),
+
+    CONSTRAINT fk_antecedente_arbitro
+        FOREIGN KEY (arbitro_id)
+        REFERENCES arbitro (arbitro_id),
+
+    CONSTRAINT fk_antecedente_partido
+        FOREIGN KEY (partido_id)
+        REFERENCES partido (partido_id)
+);
+
+
+-- =====================================================================
+-- 8. PUBLICIDAD
+-- =====================================================================
+
+CREATE TABLE anunciante (
+    anunciante_id             INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    nombre                    VARCHAR(180) NOT NULL,
+    pais_id                   INTEGER,
+
+    CONSTRAINT uq_anunciante_nombre UNIQUE (nombre),
+
+    CONSTRAINT fk_anunciante_pais
+        FOREIGN KEY (pais_id)
+        REFERENCES pais (pais_id)
+);
+
+CREATE TABLE campania (
+    campania_id               INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    anunciante_id             INTEGER NOT NULL,
+    nombre                    VARCHAR(180) NOT NULL,
+    fecha_inicio              DATE NOT NULL,
+    fecha_fin                 DATE NOT NULL,
+
+    CONSTRAINT uq_campania
+        UNIQUE (anunciante_id, nombre, fecha_inicio),
+
+    CONSTRAINT ck_campania_fechas
+        CHECK (fecha_fin >= fecha_inicio),
+
+    CONSTRAINT fk_campania_anunciante
+        FOREIGN KEY (anunciante_id)
+        REFERENCES anunciante (anunciante_id)
+);
+
+CREATE TABLE campania_mercado (
+    campania_id               INTEGER NOT NULL,
+    mercado_id                INTEGER NOT NULL,
+    prioridad                 SMALLINT,
+
+    PRIMARY KEY (campania_id, mercado_id),
+
+    CONSTRAINT ck_campania_mercado_prioridad
+        CHECK (prioridad IS NULL OR prioridad > 0),
+
+    CONSTRAINT fk_campania_mercado_campania
+        FOREIGN KEY (campania_id)
+        REFERENCES campania (campania_id),
+
+    CONSTRAINT fk_campania_mercado_mercado
+        FOREIGN KEY (mercado_id)
+        REFERENCES mercado (mercado_id)
+);
+
+CREATE TABLE pieza_publicitaria (
+    pieza_id                  INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    campania_id               INTEGER NOT NULL,
+    nombre                    VARCHAR(180) NOT NULL,
+    idioma                    VARCHAR(80) NOT NULL,
+    contenido_uri             VARCHAR(1000),
+    activa                    BOOLEAN NOT NULL DEFAULT TRUE,
+
+    CONSTRAINT uq_pieza
+        UNIQUE (campania_id, nombre, idioma),
+
+    CONSTRAINT fk_pieza_campania
+        FOREIGN KEY (campania_id)
+        REFERENCES campania (campania_id)
+);
+
+CREATE TABLE pieza_mercado (
+    pieza_id                  INTEGER NOT NULL,
+    mercado_id                INTEGER NOT NULL,
+
+    PRIMARY KEY (pieza_id, mercado_id),
+
+    CONSTRAINT fk_pieza_mercado_pieza
+        FOREIGN KEY (pieza_id)
+        REFERENCES pieza_publicitaria (pieza_id),
+
+    CONSTRAINT fk_pieza_mercado_mercado
+        FOREIGN KEY (mercado_id)
+        REFERENCES mercado (mercado_id)
+);
+
+-- No se crea una entidad "espacio_publicitario" porque el enunciado no
+-- le asigna atributos propios: los cuatro espacios se identifican por su
+-- numero dentro de cada partido.
+--
+-- El importe y la moneda se guardan en la asignacion historica porque son
+-- atributos de la pauta efectivamente exhibida en ese partido y espacio.
+CREATE TABLE publicidad_partido (
+    publicidad_partido_id     INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    partido_id                INTEGER NOT NULL,
+    numero_espacio            SMALLINT NOT NULL,
+    pieza_id                  INTEGER NOT NULL,
+    importe                   DECIMAL(18,2) NOT NULL,
+    moneda                    CHAR(3) NOT NULL,
+
+    CONSTRAINT uq_publicidad_partido_espacio
+        UNIQUE (partido_id, numero_espacio),
+
+    CONSTRAINT ck_publicidad_partido_espacio
+        CHECK (numero_espacio BETWEEN 1 AND 4),
+
+    CONSTRAINT ck_publicidad_partido_importe
+        CHECK (importe >= 0),
+
+    CONSTRAINT fk_publicidad_partido_partido
+        FOREIGN KEY (partido_id)
+        REFERENCES partido (partido_id),
+
+    CONSTRAINT fk_publicidad_partido_pieza
+        FOREIGN KEY (pieza_id)
+        REFERENCES pieza_publicitaria (pieza_id)
+);
+
+
+-- =====================================================================
+-- 9. DATOS EXTERNOS NECESARIOS PARA ANALISIS
+-- =====================================================================
+
+CREATE TABLE pbi_pais (
+    pais_id                   INTEGER NOT NULL,
+    anio                      SMALLINT NOT NULL,
+    pbi_per_capita_usd        DECIMAL(18,2) NOT NULL,
+
+    PRIMARY KEY (pais_id, anio),
+
+    CONSTRAINT ck_pbi_valor
+        CHECK (pbi_per_capita_usd >= 0),
+
+    CONSTRAINT fk_pbi_pais
+        FOREIGN KEY (pais_id)
+        REFERENCES pais (pais_id)
+);
+
+CREATE TABLE tipo_cambio (
+    moneda_origen             CHAR(3) NOT NULL,
+    moneda_destino            CHAR(3) NOT NULL,
+    fecha                     DATE NOT NULL,
+    tasa                      DECIMAL(24,10) NOT NULL,
+
+    PRIMARY KEY (moneda_origen, moneda_destino, fecha),
+
+    CONSTRAINT ck_tipo_cambio_monedas
+        CHECK (moneda_origen <> moneda_destino),
+
+    CONSTRAINT ck_tipo_cambio_tasa
+        CHECK (tasa > 0)
+);
+
+CREATE TABLE feriado (
+    feriado_id                INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    pais_id                   INTEGER NOT NULL,
+    fecha                     DATE NOT NULL,
+    nombre                    VARCHAR(180) NOT NULL,
+
+    CONSTRAINT uq_feriado
+        UNIQUE (pais_id, fecha, nombre),
+
+    CONSTRAINT fk_feriado_pais
+        FOREIGN KEY (pais_id)
+        REFERENCES pais (pais_id)
+);
+
+-- =====================================================================
+-- FIN DEL MODELO
+-- =====================================================================
